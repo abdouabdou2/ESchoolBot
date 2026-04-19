@@ -1,0 +1,2 @@
+rootProject.name = "ESchoolBot"
+include ':app'
