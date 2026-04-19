@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html dir="rtl" lang="ar">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>التسجيل في الدورة</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500&display=swap');
+*{box-sizing:border-box;margin:0;padding:0;}
+body{font-family:'IBM Plex Sans Arabic',sans-serif;background:#F0F4F8;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:1rem;}
+.wrap{width:100%;max-width:420px;}
+.header{text-align:center;margin-bottom:1.5rem;}
+.header h1{font-size:22px;font-weight:500;color:#1a1a1a;}
+.header p{font-size:14px;color:#666;margin-top:4px;}
+.card{background:#fff;border-radius:16px;padding:1.5rem;margin-bottom:1rem;box-shadow:0 1px 4px rgba(0,0,0,0.07);}
+label{display:block;font-size:13px;color:#555;margin-bottom:5px;}
+input{width:100%;height:44px;padding:0 14px;font-size:15px;border:1px solid #ddd;border-radius:10px;background:#F8F8F8;font-family:inherit;color:#1a1a1a;}
+input:focus{outline:none;border-color:#1D9E75;box-shadow:0 0 0 3px rgba(29,158,117,0.1);}
+.upload-zone{border:2px dashed #ccc;border-radius:10px;padding:1.25rem;text-align:center;cursor:pointer;background:#F8F8F8;transition:border-color .2s;margin-top:1rem;}
+.upload-zone:hover,.upload-zone.has-file{border-color:#1D9E75;}
+.upload-zone.has-file{background:#E1F5EE;}
+.upload-zone p{font-size:13px;color:#777;margin-top:6px;}
+#fileInput{display:none;}
+#previewImg{max-width:100%;border-radius:8px;margin-top:10px;max-height:180px;object-fit:contain;display:none;}
+.reading-box{background:#F8F8F8;border-radius:10px;padding:.85rem;margin-top:.75rem;display:none;}
+.row{display:flex;justify-content:space-between;align-items:center;padding:5px 0;border-bottom:1px solid #eee;font-size:13px;}
+.row:last-child{border:none;}
+.lbl{color:#888;}
+.val{font-weight:500;color:#1a1a1a;}
+.badge{padding:2px 10px;border-radius:100px;font-size:12px;font-weight:500;}
+.ok{background:#9FE1CB;color:#085041;}
+.fail{background:#F7C1C1;color:#791F1F;}
+.btn-wa{width:100%;background:#25D366;color:#fff;display:flex;align-items:center;justify-content:center;gap:9px;height:50px;border-radius:12px;font-size:16px;font-weight:500;font-family:inherit;border:none;cursor:pointer;transition:opacity .15s;margin-top:.5rem;}
+.btn-wa:hover{opacity:.9;}
+.btn-wa:disabled{opacity:.4;cursor:not-allowed;}
+.spinner{display:inline-block;width:16px;height:16px;border:2px solid #ccc;border-top-color:#1D9E75;border-radius:50%;animation:spin .7s linear infinite;}
+@keyframes spin{to{transform:rotate(360deg);}}
+.hint{font-size:12px;color:#999;text-align:center;margin-top:.4rem;}
+#doneScreen{display:none;text-align:center;padding:2rem 1rem;}
+.done-c{width:64px;height:64px;background:#E1F5EE;border-radius:50%;display:flex;align-items:center;justify-content:center;margin:0 auto .75rem;font-size:28px;color:#0F6E56;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="header">
+    <h1>التسجيل في الدورة</h1>
+    <p>أدخل اسمك وارفع إيصال Bankily</p>
+  </div>
+
+  <div id="mainScreen">
+    <div class="card">
+      <label>الاسم الكامل</label>
+      <input type="text" id="nameInput" placeholder="أدخل اسمك الكامل" oninput="checkReady()" />
+    </div>
+
+    <div class="card">
+      <label>لقطة شاشة إيصال Bankily</label>
+      <div class="upload-zone" id="uploadZone" onclick="document.getElementById('fileInput').click()">
+        <div style="font-size:28px;">📱</div>
+        <p>انقر لرفع لقطة الإيصال</p>
+        <p style="font-size:11px;margin-top:2px;">JPG أو PNG</p>
+        <img id="previewImg" />
+      </div>
+      <input type="file" id="fileInput" accept="image/*" onchange="handleFile(event)" />
+
+      <div class="reading-box" id="readingBox">
+        <div style="font-size:13px;font-weight:500;color:#555;margin-bottom:6px;display:flex;align-items:center;gap:6px;">
+          <span id="readLabel">جارٍ القراءة</span>
+          <span class="spinner" id="spinner"></span>
+        </div>
+        <div id="extractedRows"></div>
+      </div>
+    </div>
+
+    <button class="btn-wa" id="sendBtn" onclick="sendToWhatsApp()" disabled>
+      <svg width="20" height="20" viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="14" fill="white" fill-opacity="0.2"/><path d="M20.5 7.5C18.8 5.8 16.5 4.9 14 4.9c-5 0-9.1 4.1-9.1 9.1 0 1.6.4 3.2 1.2 4.6L4.8 23.1l4.7-1.2c1.3.7 2.8 1.1 4.3 1.1h.1c5 0 9.1-4.1 9.1-9.1 0-2.4-1-4.7-2.5-6.4zm-6.5 14c-1.4 0-2.7-.4-3.9-1l-.3-.2-2.8.7.8-2.7-.2-.3c-.7-1.2-1.1-2.5-1.1-3.9 0-4.2 3.4-7.6 7.6-7.6 2 0 3.9.8 5.4 2.2 1.4 1.4 2.2 3.3 2.2 5.4-.1 4.2-3.5 7.4-7.7 7.4zm4.2-5.6c-.2-.1-1.4-.7-1.6-.8-.2-.1-.4-.1-.5.1-.2.2-.6.8-.8 1-.1.2-.3.2-.5.1-.2-.1-1-.4-1.9-1.2-.7-.6-1.2-1.4-1.3-1.6-.1-.2 0-.4.1-.5l.4-.4c.1-.1.2-.3.3-.4.1-.1.1-.3 0-.4-.1-.1-.5-1.3-.7-1.8-.2-.5-.4-.4-.5-.4h-.5c-.2 0-.4.1-.6.3-.2.2-.8.8-.8 1.9s.8 2.2.9 2.4c.1.1 1.6 2.4 3.8 3.4.5.2.9.4 1.2.5.5.2 1 .1 1.3-.1.4-.2 1.4-.6 1.6-1.1.2-.5.2-1 .1-1.1-.1-.1-.3-.2-.5-.3z" fill="white"/></svg>
+      إرسال على واتساب
+    </button>
+    <p class="hint" id="hint">أدخل الاسم وارفع الإيصال أولاً</p>
+  </div>
+
+  <div id="doneScreen">
+    <div class="done-c">✓</div>
+    <div style="font-size:17px;font-weight:500;color:#0F6E56;margin-bottom:8px;">تم الإرسال!</div>
+    <div style="font-size:13px;color:#777;line-height:1.7;">سيتم التحقق من إيصالك وتفعيل حسابك قريباً</div>
+  </div>
+</div>
+
+<script>
+let extracted = null;
+let readingDone = false;
+
+function checkReady() {
+  const name = document.getElementById('nameInput').value.trim();
+  const btn = document.getElementById('sendBtn');
+  const hint = document.getElementById('hint');
+  if (name && readingDone && extracted && extracted.valid) {
+    btn.disabled = false;
+    hint.textContent = 'جاهز للإرسال';
+  } else if (!name) {
+    btn.disabled = true;
+    hint.textContent = 'أدخل اسمك أولاً';
+  } else {
+    btn.disabled = true;
+    hint.textContent = 'انتظر انتهاء قراءة الإيصال';
+  }
+}
+
+function handleFile(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    const img = document.getElementById('previewImg');
+    img.src = ev.target.result;
+    img.style.display = 'block';
+    document.getElementById('uploadZone').classList.add('has-file');
+    readReceipt(ev.target.result.split(',')[1], file.type || 'image/jpeg');
+  };
+  reader.readAsDataURL(file);
+}
+
+async function readReceipt(b64, mtype) {
+  readingDone = false;
+  extracted = null;
+  const box = document.getElementById('readingBox');
+  const spinner = document.getElementById('spinner');
+  const label = document.getElementById('readLabel');
+  const rows = document.getElementById('extractedRows');
+  box.style.display = 'block';
+  spinner.style.display = 'inline-block';
+  label.textContent = 'جارٍ قراءة الإيصال...';
+  rows.innerHTML = '';
+  checkReady();
+
+  try {
+    const res = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'claude-sonnet-4-20250514',
+        max_tokens: 500,
+        system: `أنت تقرأ إيصالات Bankily الموريتانية. أجب بـ JSON فقط بدون أي نص أو markdown.
+الحقول:
+- valid: true/false
+- amount: رقم المبلغ أو null
+- transaction_id: رقم المعاملة أو null
+- date: التاريخ والوقت أو null
+- receiver: رقم المستلم أو null`,
+        messages: [{
+          role: 'user',
+          content: [
+            { type: 'image', source: { type: 'base64', media_type: mtype, data: b64 } },
+            { type: 'text', text: 'استخرج بيانات هذا الإيصال' }
+          ]
+        }]
+      })
+    });
+
+    const data = await res.json();
+    const text = data.content?.map(i => i.text || '').join('') || '';
+    const p = JSON.parse(text.replace(/```json|```/g, '').trim());
+    extracted = p;
+    readingDone = true;
+    spinner.style.display = 'none';
+
+    if (!p.valid) {
+      label.textContent = 'صورة غير صالحة';
+      rows.innerHTML = `<div style="font-size:13px;color:#A32D2D;padding:4px 0;">هذه ليست لقطة إيصال Bankily ناجح</div>`;
+      return;
+    }
+
+    label.textContent = 'تم قراءة الإيصال ✓';
+    const ok = parseFloat(p.amount) >= 200;
+    rows.innerHTML = `
+      <div class="row"><span class="lbl">المبلغ</span><span class="val"><span class="badge ${ok?'ok':'fail'}">${p.amount??'—'} MRU</span></span></div>
+      <div class="row"><span class="lbl">رقم المعاملة</span><span class="val" style="font-size:11px;direction:ltr;">${p.transaction_id??'—'}</span></div>
+      <div class="row"><span class="lbl">المستلم</span><span class="val">${p.receiver??'—'}</span></div>
+      <div class="row"><span class="lbl">التاريخ</span><span class="val">${p.date??'—'}</span></div>`;
+    checkReady();
+  } catch(err) {
+    spinner.style.display = 'none';
+    label.textContent = 'تعذّرت القراءة';
+    rows.innerHTML = `<div style="font-size:13px;color:#A32D2D;">حدث خطأ، حاول مرة أخرى</div>`;
+  }
+}
+
+async function sendToWhatsApp() {
+  const name = document.getElementById('nameInput').value.trim();
+  const p = extracted;
+
+  // أرسل بيانات الطالب للتطبيق على الهاتف (HTTP محلي)
+  try {
+    await fetch('http://localhost:8080/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        name: name,
+        txId: p.transaction_id,
+        amount: parseFloat(p.amount) || 0
+      })
+    });
+  } catch(e) {
+    // التطبيق غير مثبت أو غير شغّال — لا مشكلة، نكمل بواتساب
+    console.log('App not reachable:', e.message);
+  }
+
+  // أرسل رسالة واتساب مع البيانات
+  const msg =
+`📋 تسجيل جديد في الدورة
+━━━━━━━━━━━━
+👤 الاسم: ${name}
+━━━━━━━━━━━━
+💰 المبلغ: ${p.amount??'؟'} MRU
+🔢 المعاملة: ${p.transaction_id??'؟'}
+📱 المستلم: ${p.receiver??'؟'}
+📅 التاريخ: ${p.date??'؟'}
+━━━━━━━━━━━━
+${parseFloat(p.amount)>=200 ? '✅ المبلغ كافٍ' : '⚠️ المبلغ غير كافٍ'}`;
+
+  window.open('https://wa.me/22248585761?text=' + encodeURIComponent(msg), '_blank');
+  document.getElementById('mainScreen').style.display = 'none';
+  document.getElementById('doneScreen').style.display = 'block';
+}
+</script>
+</body>
+</html>
