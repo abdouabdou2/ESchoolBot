@@ -20,13 +20,10 @@ public class NotificationService extends NotificationListenerService {
     private static final String TAG = "ESchoolBot";
     private static final String BANKILY_PACKAGE = "mr.bpm.digitalbanking.consumer";
     private static final String WHATSAPP_PACKAGE = "com.whatsapp.w4b";
-    private static final String TELEGRAM_PACKAGE = "org.telegram.messenger";
-    private static final String BOT_TOKEN = "8717542008:AAGwVep7MqfHnqzYo8DwgLDFnrGw2kSPE6M";
-    private static final String ADMIN_CHAT_ID = "6681793612";
     private static final int REQUIRED_AMOUNT = 200;
-    private static final String APP_URL = "https://slip-retainer-phonics.ngrok-free.dev";
-    private static final String WA_SERVER = "http://localhost:3000/assign-code";
-    private static final long WAIT_TIMEOUT = 3 * 60 * 1000; // 3 دقائق
+    private static final String ASSIGN_URL = "http://localhost:3000/assign-code";
+    private static final String FIND_URL = "http://localhost:3000/find-and-send";
+    private static final long WAIT_TIMEOUT = 3 * 60 * 1000;
 
     private ExecutorService executor = Executors.newSingleThreadExecutor();
     private Handler handler = new Handler(Looper.getMainLooper());
@@ -36,29 +33,28 @@ public class NotificationService extends NotificationListenerService {
         String pkg = sbn.getPackageName();
         if (WHATSAPP_PACKAGE.equals(pkg)) handleWhatsApp(sbn);
         else if (BANKILY_PACKAGE.equals(pkg)) handleBankily(sbn);
-        else if (TELEGRAM_PACKAGE.equals(pkg)) handleTelegram(sbn);
     }
 
-    // ========== واتساب — يحفظ الرسالة ويقارن ==========
+    // ========== واتساب ==========
     private void handleWhatsApp(StatusBarNotification sbn) {
         Bundle extras = sbn.getNotification().extras;
         String title = extras.getString(Notification.EXTRA_TITLE, "");
         String text  = extras.getString(Notification.EXTRA_TEXT, "");
         String full  = title + " " + text;
 
-        if (!full.contains("\u062a\u0633\u062c\u064a\u0644 \u062c\u062f\u064a\u062f") || !full.contains("\u0627\u0644\u0645\u0639\u0627\u0645\u0644\u0629:")) return;
+        if (!full.contains("\u062a\u0633\u062c\u064a\u0644 \u062c\u062f\u064a\u062f") 
+            || !full.contains("\u0627\u0644\u0645\u0639\u0627\u0645\u0644\u0629:")) return;
 
         String name = extractBetween(full, "\u0627\u0644\u0627\u0633\u0645:", "\n");
         if (name == null) name = extractBetween(full, "\u0627\u0644\u0627\u0633\u0645:", null);
-        String txId  = extractTransactionId(full);
-        int amount   = extractAmount(full);
+        String txId = extractTransactionId(full);
+        int amount  = extractAmount(full);
 
         if (name == null || txId == null) return;
         name = name.trim();
 
-        Log.d(TAG, "WA student: " + name + " | TX: " + txId + " | amount: " + amount);
+        Log.d(TAG, "WA: " + name + " | TX: " + txId + " | amount: " + amount);
 
-        // احفظ رسالة واتساب
         SharedPreferences waPrefs = getSharedPreferences("pending_wa", MODE_PRIVATE);
         waPrefs.edit()
             .putString(txId, name)
@@ -69,7 +65,7 @@ public class NotificationService extends NotificationListenerService {
         sendBroadcast(new Intent("com.eschool.STUDENT_PENDING")
             .putExtra("name", name).putExtra("txId", txId).putExtra("amount", amount));
 
-        // تحقق إذا كان إشعار Bankily وصل مسبقاً
+        // تحقق إذا كان Bankily وصل مسبقاً
         SharedPreferences bankilyPrefs = getSharedPreferences("pending_bankily", MODE_PRIVATE);
         String savedAmount = bankilyPrefs.getString(txId, null);
         if (savedAmount == null) {
@@ -78,9 +74,9 @@ public class NotificationService extends NotificationListenerService {
         }
 
         if (savedAmount != null && Integer.parseInt(savedAmount) >= REQUIRED_AMOUNT) {
-            Log.d(TAG, "Bankily already received! Registering: " + name);
+            Log.d(TAG, "Bankily already received! Assigning code: " + name);
             final String fn = name; final String ft = txId;
-            executor.execute(() -> registerStudent(fn, ft));
+            executor.execute(() -> assignCode(fn, ft));
             return;
         }
 
@@ -90,7 +86,7 @@ public class NotificationService extends NotificationListenerService {
         handler.postDelayed(() -> {
             SharedPreferences check = getSharedPreferences("pending_wa", MODE_PRIVATE);
             if (check.contains(finalTxId)) {
-                Log.d(TAG, "Timeout 3min: no Bankily for " + finalName);
+                Log.d(TAG, "Timeout: no Bankily for " + finalName);
                 executor.execute(() -> sendTimeoutMessage(finalTxId));
                 check.edit().remove(finalTxId).remove(finalTxId + "_amount")
                     .remove(finalTxId + "_time").apply();
@@ -98,7 +94,7 @@ public class NotificationService extends NotificationListenerService {
         }, WAIT_TIMEOUT);
     }
 
-    // ========== Bankily — يحفظ الإشعار ويقارن ==========
+    // ========== Bankily ==========
     private void handleBankily(StatusBarNotification sbn) {
         Bundle extras = sbn.getNotification().extras;
         String title = extras.getString(Notification.EXTRA_TITLE, "");
@@ -106,12 +102,12 @@ public class NotificationService extends NotificationListenerService {
         String full  = (title + " " + text).toLowerCase();
 
         boolean isSuccess = full.contains("transfert") || full.contains("\u0646\u0642\u0644")
-                         || full.contains("\u062a\u062d\u0648\u064a\u0644") || full.contains("reussi")
-                         || full.contains("\u0646\u0627\u062c\u062d");
+                         || full.contains("\u062a\u062d\u0648\u064a\u0644") 
+                         || full.contains("reussi") || full.contains("\u0646\u0627\u062c\u062d");
         if (!isSuccess) return;
 
-        String txId  = extractTransactionId(title + " " + text);
-        int amount   = extractAmount(title + " " + text);
+        String txId = extractTransactionId(title + " " + text);
+        int amount  = extractAmount(title + " " + text);
         if (txId == null) return;
 
         Log.d(TAG, "Bankily TX: " + txId + " | amount: " + amount);
@@ -123,7 +119,6 @@ public class NotificationService extends NotificationListenerService {
         // تحقق إذا كانت رسالة واتساب وصلت مسبقاً
         SharedPreferences waPrefs = getSharedPreferences("pending_wa", MODE_PRIVATE);
         String studentName = waPrefs.getString(txId, null);
-
         if (studentName == null) {
             String alt = txId.startsWith("0") ? txId.substring(1) : "0" + txId;
             studentName = waPrefs.getString(alt, null);
@@ -131,7 +126,7 @@ public class NotificationService extends NotificationListenerService {
         }
 
         if (studentName == null) {
-            Log.d(TAG, "No WA message yet for TX: " + txId + " — waiting");
+            Log.d(TAG, "No WA yet for TX: " + txId + " — waiting");
             return;
         }
 
@@ -142,67 +137,17 @@ public class NotificationService extends NotificationListenerService {
         }
 
         final String fn = studentName; final String ft = txId;
-        executor.execute(() -> registerStudent(fn, ft));
+        executor.execute(() -> assignCode(fn, ft));
     }
 
-    // ========== تلغرام — يلتقط رد البوت ==========
-    private void handleTelegram(StatusBarNotification sbn) {
-        Bundle extras = sbn.getNotification().extras;
-        String title = extras.getString(Notification.EXTRA_TITLE, "");
-        String text  = extras.getString(Notification.EXTRA_TEXT, "");
-        String full  = title + " " + text;
-
-        if (!full.contains("\u062a\u0645 \u062a\u0633\u062c\u064a\u0644")) return;
-
-        String txId = extractTransactionId(full);
-        if (txId == null) return;
-
-        SharedPreferences waPrefs = getSharedPreferences("pending_wa", MODE_PRIVATE);
-        String name = waPrefs.getString(txId, null);
-        if (name == null) {
-            String alt = txId.startsWith("0") ? txId.substring(1) : "0" + txId;
-            name = waPrefs.getString(alt, null);
-            if (name != null) txId = alt;
-        }
-        if (name == null) return;
-
-        Log.d(TAG, "Bot confirmed: " + name);
-        final String fn = name; final String ft = txId;
-        executor.execute(() -> sendWhatsAppConfirmation(fn, ft));
-    }
-
-    // ========== تسجيل الطالب ==========
-    private void registerStudent(String name, String txId) {
+    // ========== تخصيص رمز وإرساله للطالب ==========
+    private void assignCode(String name, String txId) {
         try {
-            String botMessage = "\u0637\u0627\u0644\u0628 \u062c\u062f\u064a\u062f\n\u0627\u0644\u0627\u0633\u0645: " + name + "\n\u0627\u0644\u0645\u0639\u0631\u0641: " + txId;
-            sendTelegramMessage(botMessage);
-
-            sendBroadcast(new Intent("com.eschool.STUDENT_REGISTERED")
-                .putExtra("name", name).putExtra("txId", txId));
-
-            getSharedPreferences("pending_wa", MODE_PRIVATE).edit()
-                .remove(txId).remove(txId + "_amount").remove(txId + "_time").apply();
-            getSharedPreferences("pending_bankily", MODE_PRIVATE).edit().remove(txId).apply();
-
-        } catch (Exception e) {
-            Log.e(TAG, "Register error: " + e.getMessage());
-        }
-    }
-
-    // ========== إرسال واتساب للطالب ==========
-    private void sendWhatsAppConfirmation(String name, String txId) {
-        try {
-            String message = "\u0645\u0631\u062d\u0628\u0627\u064b " + name + "! \uD83C\uDF89\n\n"
-                + "\u2705 \u062a\u0645 \u062a\u0633\u062c\u064a\u0644\u0643 \u0628\u0646\u062c\u0627\u062d \u0641\u064a \u0627\u0644\u062f\u0648\u0631\u0629\n\n"
-                + "\uD83D\uDD11 \u0631\u0645\u0632 \u062f\u062e\u0648\u0644\u0643: " + txId + "\n\n"
-                + "\uD83D\uDD17 \u0631\u0627\u0628\u0637 \u0627\u0644\u062a\u0637\u0628\u064a\u0642:\n" + APP_URL + "\n\n"
-                + "\u0623\u062f\u062e\u0644 \u0631\u0645\u0632 \u062f\u062e\u0648\u0644\u0643 \u0639\u0646\u062f \u062a\u0633\u062c\u064a\u0644 \u0627\u0644\u062f\u062e\u0648\u0644.";
-
             JSONObject body = new JSONObject();
             body.put("txId", txId);
-            body.put("message", message);
+            body.put("name", name);
 
-            URL url = new URL(WA_SERVER);
+            URL url = new URL(ASSIGN_URL);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
@@ -217,12 +162,22 @@ public class NotificationService extends NotificationListenerService {
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = br.readLine()) != null) sb.append(line);
-            Log.d(TAG, "WA sent: " + sb.toString());
 
-            sendBroadcast(new Intent("com.eschool.WA_SENT").putExtra("name", name));
+            JSONObject resp = new JSONObject(sb.toString());
+            Log.d(TAG, "assign-code response: " + sb.toString());
+
+            if (resp.optBoolean("ok")) {
+                String code = resp.optString("code");
+                sendBroadcast(new Intent("com.eschool.STUDENT_REGISTERED")
+                    .putExtra("name", name).putExtra("code", code));
+
+                getSharedPreferences("pending_wa", MODE_PRIVATE).edit()
+                    .remove(txId).remove(txId + "_amount").remove(txId + "_time").apply();
+                getSharedPreferences("pending_bankily", MODE_PRIVATE).edit().remove(txId).apply();
+            }
 
         } catch (Exception e) {
-            Log.e(TAG, "WA error: " + e.getMessage());
+            Log.e(TAG, "assignCode error: " + e.getMessage());
         }
     }
 
@@ -230,7 +185,8 @@ public class NotificationService extends NotificationListenerService {
     private void sendTimeoutMessage(String txId) {
         try {
             String message = "\u062a\u0623\u062e\u0631 \u0648\u0635\u0648\u0644 \u062a\u0623\u0643\u064a\u062f \u0627\u0644\u062f\u0641\u0639 \u0645\u0646 Bankily.\n\n"
-                + "\u0625\u0630\u0627 \u0643\u0646\u062a \u0642\u062f \u0623\u0631\u0633\u0644\u062a \u0627\u0644\u0645\u0628\u0644\u063a\u060c \u064a\u0631\u062c\u0649 \u0627\u0644\u062a\u0648\u0627\u0635\u0644 \u0645\u0639\u0646\u0627:\n\n"
+                + "\u0625\u0630\u0627 \u0643\u0646\u062a \u0642\u062f \u0623\u0631\u0633\u0644\u062a \u0627\u0644\u0645\u0628\u0644\u063a\u060c "
+                + "\u064a\u0631\u062c\u0649 \u0627\u0644\u062a\u0648\u0627\u0635\u0644 \u0645\u0639\u0646\u0627 \u0645\u0628\u0627\u0634\u0631\u0629:\n\n"
                 + "48 58 57 61\n\n"
                 + "\u0633\u0646\u062a\u062d\u0642\u0642 \u064a\u062f\u0648\u064a\u0627\u064b \u0648\u062a\u0641\u0639\u064a\u0644 \u062d\u0633\u0627\u0628\u0643.";
 
@@ -238,7 +194,7 @@ public class NotificationService extends NotificationListenerService {
             body.put("txId", txId);
             body.put("message", message);
 
-            URL url = new URL(WA_SERVER);
+            URL url = new URL(FIND_URL);
             HttpURLConnection conn = (HttpURLConnection) url.openConnection();
             conn.setRequestMethod("POST");
             conn.setRequestProperty("Content-Type", "application/json");
@@ -253,34 +209,11 @@ public class NotificationService extends NotificationListenerService {
             StringBuilder sb = new StringBuilder();
             String line;
             while ((line = br.readLine()) != null) sb.append(line);
-            Log.d(TAG, "Timeout WA sent: " + sb.toString());
+            Log.d(TAG, "Timeout sent: " + sb.toString());
 
         } catch (Exception e) {
             Log.e(TAG, "Timeout error: " + e.getMessage());
         }
-    }
-
-    // ========== تلغرام ==========
-    private void sendTelegramMessage(String text) throws Exception {
-        URL url = new URL("https://api.telegram.org/bot" + BOT_TOKEN + "/sendMessage");
-        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
-        conn.setRequestMethod("POST");
-        conn.setRequestProperty("Content-Type", "application/json");
-        conn.setDoOutput(true);
-
-        JSONObject body = new JSONObject();
-        body.put("chat_id", ADMIN_CHAT_ID);
-        body.put("text", text);
-
-        try (OutputStream os = conn.getOutputStream()) {
-            os.write(body.toString().getBytes("UTF-8"));
-        }
-
-        BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
-        StringBuilder sb = new StringBuilder();
-        String line;
-        while ((line = br.readLine()) != null) sb.append(line);
-        Log.d(TAG, "Telegram sent: " + new JSONObject(sb.toString()).optBoolean("ok"));
     }
 
     // ========== أدوات ==========
