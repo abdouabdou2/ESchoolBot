@@ -62,6 +62,7 @@ public class NotificationService extends NotificationListenerService {
         prefs.edit()
             .putString(txId, name)
             .putString(txId + "_phone", waPhone)
+            .putLong(txId + "_time", System.currentTimeMillis())
             .apply();
 
         Intent intent = new Intent("com.eschool.STUDENT_PENDING");
@@ -71,6 +72,19 @@ public class NotificationService extends NotificationListenerService {
         sendBroadcast(intent);
 
         Log.d(TAG, "Student saved: " + name + " | " + txId + " | phone: " + waPhone);
+
+        // جدولة تحقق بعد 5 دقائق — إذا لم يتم التسجيل أرسل رسالة للطالب
+        final String finalName2 = name;
+        final String finalTxId2 = txId;
+        final String finalPhone2 = waPhone;
+        new android.os.Handler(android.os.Looper.getMainLooper()).postDelayed(() -> {
+            SharedPreferences checkPrefs = getSharedPreferences("pending_students", MODE_PRIVATE);
+            // إذا الطالب لا يزال منتظراً (لم يُسجَّل بعد)
+            if (checkPrefs.contains(finalTxId2)) {
+                Log.d(TAG, "Timeout: student still pending after 5min: " + finalName2);
+                executor.execute(() -> sendTimeoutMessage(finalName2, finalPhone2));
+            }
+        }, 5 * 60 * 1000); // 5 دقائق
     }
 
     // ========== Bankily ==========
@@ -120,18 +134,47 @@ public class NotificationService extends NotificationListenerService {
         String text  = extras.getString(Notification.EXTRA_TEXT, "");
         String full  = title + " " + text;
 
-        // ابحث عن رد البوت يحتوي على "تم تسجيل" أو "تم التسجيل"
-        if (!full.contains("تم تسجيل") && !full.contains("تم التسجيل")) return;
+        Log.d(TAG, "Telegram notification: " + full);
 
-        // استخرج المعرف من رسالة البوت
+        // ابحث عن رد البوت
+        if (!full.contains("تم تسجيل")) return;
+
+        // استخرج المعرف — قد يكون بدون صفر في البداية
         String txId = extractTransactionId(full);
         if (txId == null) return;
 
         SharedPreferences prefs = getSharedPreferences("pending_students", MODE_PRIVATE);
+
+        // ابحث بالمعرف مباشرة
         String name  = prefs.getString(txId, null);
         String phone = prefs.getString(txId + "_phone", "");
 
-        if (name == null || phone.isEmpty()) return;
+        // إذا لم يجد — جرب مع صفر في البداية (0 + txId)
+        if (name == null) {
+            String txIdWithZero = "0" + txId;
+            name  = prefs.getString(txIdWithZero, null);
+            phone = prefs.getString(txIdWithZero + "_phone", "");
+            if (name != null) txId = txIdWithZero;
+        }
+
+        // إذا لم يجد — ابحث في كل المفاتيح عن أقرب تطابق
+        if (name == null) {
+            for (java.util.Map.Entry<String, ?> entry : prefs.getAll().entrySet()) {
+                String key = entry.getKey();
+                if (key.endsWith("_phone")) continue;
+                if (key.contains(txId) || txId.contains(key)) {
+                    name  = (String) entry.getValue();
+                    phone = prefs.getString(key + "_phone", "");
+                    txId  = key;
+                    break;
+                }
+            }
+        }
+
+        if (name == null || phone.isEmpty()) {
+            Log.d(TAG, "Bot confirmed but student not found for TX: " + txId);
+            return;
+        }
 
         Log.d(TAG, "Bot confirmed: " + name + " | sending WA to " + phone);
 
@@ -194,10 +237,7 @@ public class NotificationService extends NotificationListenerService {
             intent.putExtra("txId", txId);
             sendBroadcast(intent);
 
-            // إذا البوت لا يرسل إشعاراً — أرسل مباشرة
-            if (!phone.isEmpty()) {
-                sendWhatsAppConfirmation(name, txId, phone);
-            }
+            // انتظر رد البوت عبر إشعار تلغرام — handleTelegram سيرسل للطالب
 
             prefs.edit().remove(txId).remove(txId + "_phone").apply();
 
@@ -283,6 +323,49 @@ public class NotificationService extends NotificationListenerService {
             }
         }
         return null;
+    }
+
+    // ========== رسالة انتهاء المهلة ==========
+    private void sendTimeoutMessage(String name, String phone) {
+        try {
+            String message = "مرحباً " + name + ",
+
+"
+                + "تأخر وصول تأكيد الدفع من Bankily.
+
+"
+                + "إذا كنت قد أرسلت المبلغ، يرجى التواصل معنا مباشرة:
+
+"
+                + "📞 48 58 57 61
+
+"
+                + "سنتحقق يدوياً وتفعيل حسابك في أقرب وقت.";
+
+            JSONObject body = new JSONObject();
+            body.put("phone", phone);
+            body.put("message", message);
+
+            URL url = new URL(WA_SERVER);
+            HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+            conn.setRequestMethod("POST");
+            conn.setRequestProperty("Content-Type", "application/json");
+            conn.setDoOutput(true);
+            conn.setConnectTimeout(5000);
+
+            try (OutputStream os = conn.getOutputStream()) {
+                os.write(body.toString().getBytes("UTF-8"));
+            }
+
+            BufferedReader br = new BufferedReader(new InputStreamReader(conn.getInputStream()));
+            StringBuilder sb = new StringBuilder();
+            String line;
+            while ((line = br.readLine()) != null) sb.append(line);
+            Log.d(TAG, "Timeout WA sent: " + sb.toString());
+
+        } catch (Exception e) {
+            Log.e(TAG, "Timeout WA error: " + e.getMessage());
+        }
     }
 
     private String extractTransactionId(String text) {
