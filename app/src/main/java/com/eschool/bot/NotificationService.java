@@ -17,16 +17,69 @@ public class NotificationService extends NotificationListenerService {
 
     private static final String TAG = "ESchoolBot";
     private static final String BANKILY_PACKAGE = "mr.bpm.digitalbanking.consumer";
+    private static final String WHATSAPP_PACKAGE = "com.whatsapp.w4b";
     private static final String BOT_TOKEN = "8717542008:AAGwVep7MqfHnqzYo8DwgLDFnrGw2kSPE6M";
-    private static final String APP_URL = "https://slip-retainer-phonics.ngrok-free.dev/";
     private static final int REQUIRED_AMOUNT = 200;
 
     private ExecutorService executor = Executors.newSingleThreadExecutor();
 
     @Override
     public void onNotificationPosted(StatusBarNotification sbn) {
-        if (!BANKILY_PACKAGE.equals(sbn.getPackageName())) return;
+        String pkg = sbn.getPackageName();
 
+        if (WHATSAPP_PACKAGE.equals(pkg)) {
+            handleWhatsApp(sbn);
+        } else if (BANKILY_PACKAGE.equals(pkg)) {
+            handleBankily(sbn);
+        }
+    }
+
+    // ========== واتساب بيزنس ==========
+    private void handleWhatsApp(StatusBarNotification sbn) {
+        Bundle extras = sbn.getNotification().extras;
+        String title = extras.getString(Notification.EXTRA_TITLE, "");
+        String text  = extras.getString(Notification.EXTRA_TEXT, "");
+        String full  = title + " " + text;
+
+        Log.d(TAG, "WhatsApp notification: " + full);
+
+        // ابحث عن رسالة تسجيل — تحتوي على "الاسم:" و "المعاملة:"
+        if (!full.contains("الاسم:") || !full.contains("المعاملة:")) return;
+
+        // استخرج الاسم
+        String name = extractBetween(full, "الاسم:", "\n");
+        if (name == null) name = extractBetween(full, "الاسم:", null);
+
+        // استخرج رقم المعاملة
+        String txId = extractTransactionId(full);
+
+        // استخرج المبلغ
+        int amount = extractAmount(full);
+
+        if (name == null || txId == null) {
+            Log.d(TAG, "WhatsApp: could not extract name or txId");
+            return;
+        }
+
+        name = name.trim();
+        Log.d(TAG, "WhatsApp student: " + name + " | TX: " + txId + " | Amount: " + amount);
+
+        // احفظ الطالب منتظراً تأكيد Bankily
+        SharedPreferences prefs = getSharedPreferences("pending_students", MODE_PRIVATE);
+        prefs.edit().putString(txId, name).apply();
+
+        // أبلغ التطبيق
+        Intent intent = new Intent("com.eschool.STUDENT_PENDING");
+        intent.putExtra("name", name);
+        intent.putExtra("txId", txId);
+        intent.putExtra("amount", amount);
+        sendBroadcast(intent);
+
+        Log.d(TAG, "Student saved pending: " + name);
+    }
+
+    // ========== Bankily ==========
+    private void handleBankily(StatusBarNotification sbn) {
         Bundle extras = sbn.getNotification().extras;
         String title = extras.getString(Notification.EXTRA_TITLE, "");
         String text  = extras.getString(Notification.EXTRA_TEXT, "");
@@ -34,41 +87,34 @@ public class NotificationService extends NotificationListenerService {
 
         Log.d(TAG, "Bankily notification: " + full);
 
-        // تحقق أن العملية ناجحة
-        boolean isSuccess = full.contains("transfert") || full.contains("نقل") 
+        boolean isSuccess = full.contains("transfert") || full.contains("نقل")
                          || full.contains("تحويل") || full.contains("reussi")
                          || full.contains("ناجح");
         if (!isSuccess) return;
 
-        // استخرج رقم المعاملة
-        String txId = extractTransactionId(title + " " + text);
-        // استخرج المبلغ
-        int amount = extractAmount(title + " " + text);
+        String txId  = extractTransactionId(title + " " + text);
+        int amount   = extractAmount(title + " " + text);
 
-        if (txId == null || txId.isEmpty()) {
-            Log.d(TAG, "No transaction ID found");
-            return;
-        }
+        if (txId == null || txId.isEmpty()) return;
 
-        Log.d(TAG, "TX: " + txId + " | Amount: " + amount);
+        Log.d(TAG, "Bankily TX: " + txId + " | Amount: " + amount);
 
-        // ابحث عن طالب منتظر بنفس رقم المعاملة أو تطابق المبلغ
         SharedPreferences prefs = getSharedPreferences("pending_students", MODE_PRIVATE);
         String studentName = prefs.getString(txId, null);
 
-        // إذا لم يجد بالمعرف الكامل، ابحث عن أقرب طالب بالمبلغ الصحيح
         if (studentName == null) {
             studentName = findStudentByAmount(prefs, amount, txId);
         }
 
         if (studentName == null) {
             Log.d(TAG, "No matching student for TX: " + txId);
+            // احفظ إشعار Bankily مؤقتاً — ربما يصل طالب لاحقاً
+            getSharedPreferences("pending_bankily", MODE_PRIVATE)
+                .edit().putString(txId, String.valueOf(amount)).apply();
             return;
         }
 
         if (amount < REQUIRED_AMOUNT) {
-            Log.d(TAG, "Amount too low: " + amount);
-            // أرسل إشعاراً للمدير
             sendBroadcast(new Intent("com.eschool.AMOUNT_LOW")
                 .putExtra("name", studentName)
                 .putExtra("amount", amount)
@@ -76,38 +122,35 @@ public class NotificationService extends NotificationListenerService {
             return;
         }
 
-        // ✅ كل شيء صحيح — سجّل الطالب
         final String finalName = studentName;
         final String finalTxId = txId;
         final SharedPreferences finalPrefs = prefs;
-
         executor.execute(() -> registerStudent(finalName, finalTxId, finalPrefs));
     }
 
+    // ========== تسجيل الطالب ==========
     private void registerStudent(String name, String txId, SharedPreferences prefs) {
         try {
-            // 1. أرسل للبوت
             String botMessage = "طالب جديد\nالاسم: " + name + "\nالمعرف: " + txId;
             String botResponse = sendTelegramMessage(botMessage);
             Log.d(TAG, "Bot response: " + botResponse);
 
-            // 2. أرسل إشعار للتطبيق الرئيسي
             Intent intent = new Intent("com.eschool.STUDENT_REGISTERED");
             intent.putExtra("name", name);
             intent.putExtra("txId", txId);
             intent.putExtra("botResponse", botResponse);
             sendBroadcast(intent);
 
-            // 3. احذف الطالب من قائمة الانتظار
             prefs.edit().remove(txId).apply();
+            getSharedPreferences("pending_bankily", MODE_PRIVATE).edit().remove(txId).apply();
 
         } catch (Exception e) {
             Log.e(TAG, "Error registering student: " + e.getMessage());
         }
     }
 
+    // ========== تلغرام ==========
     private String sendTelegramMessage(String text) throws Exception {
-        // نحتاج chat_id — نحصل عليه من getUpdates أولاً
         SharedPreferences prefs = getSharedPreferences("bot_config", MODE_PRIVATE);
         String chatId = prefs.getString("admin_chat_id", "");
 
@@ -168,13 +211,22 @@ public class NotificationService extends NotificationListenerService {
         return "";
     }
 
+    // ========== أدوات ==========
+    private String extractBetween(String text, String start, String end) {
+        int s = text.indexOf(start);
+        if (s < 0) return null;
+        s += start.length();
+        if (end == null) return text.substring(s).trim();
+        int e = text.indexOf(end, s);
+        if (e < 0) return text.substring(s).trim();
+        return text.substring(s, e).trim();
+    }
+
     private String findStudentByAmount(SharedPreferences prefs, int amount, String txId) {
-        // ابحث عن طالب انتظر بأي مفتاح إذا كان المبلغ صحيح
         if (amount >= REQUIRED_AMOUNT) {
             java.util.Map<String, ?> all = prefs.getAll();
             for (java.util.Map.Entry<String, ?> entry : all.entrySet()) {
                 if (entry.getKey().equals("__dummy")) continue;
-                // أعد تسمية المفتاح برقم المعاملة الصحيح
                 String name = (String) entry.getValue();
                 prefs.edit().remove(entry.getKey()).putString(txId, name).apply();
                 return name;
@@ -184,7 +236,6 @@ public class NotificationService extends NotificationListenerService {
     }
 
     private String extractTransactionId(String text) {
-        // ابحث عن أرقام طويلة (10+ خانة) = رقم المعاملة
         java.util.regex.Pattern p = java.util.regex.Pattern.compile("\\b(\\d{10,})\\b");
         java.util.regex.Matcher m = p.matcher(text);
         if (m.find()) return m.group(1);
@@ -192,12 +243,10 @@ public class NotificationService extends NotificationListenerService {
     }
 
     private int extractAmount(String text) {
-        // ابحث عن رقم قبل MRU أو أوقية
-        java.util.regex.Pattern p = java.util.regex.Pattern.compile("(\\d+)\\s*(?:MRU|mru|أوقية|ouguiya)", 
-            java.util.regex.Pattern.CASE_INSENSITIVE);
+        java.util.regex.Pattern p = java.util.regex.Pattern.compile(
+            "(\\d+)\\s*(?:MRU|mru|أوقية|ouguiya)", java.util.regex.Pattern.CASE_INSENSITIVE);
         java.util.regex.Matcher m = p.matcher(text);
         if (m.find()) return Integer.parseInt(m.group(1));
-        // بديل: ابحث عن أي رقم صغير (المبلغ عادة 3 خانات أو أقل)
         p = java.util.regex.Pattern.compile("\\b(\\d{1,5})\\b");
         m = p.matcher(text);
         int last = 0;
