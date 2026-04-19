@@ -328,19 +328,7 @@ public class NotificationService extends NotificationListenerService {
     // ========== رسالة انتهاء المهلة ==========
     private void sendTimeoutMessage(String name, String phone) {
         try {
-            String message = "مرحباً " + name + ",
-
-"
-                + "تأخر وصول تأكيد الدفع من Bankily.
-
-"
-                + "إذا كنت قد أرسلت المبلغ، يرجى التواصل معنا مباشرة:
-
-"
-                + "📞 48 58 57 61
-
-"
-                + "سنتحقق يدوياً وتفعيل حسابك في أقرب وقت.";
+            String message = "\u0645\u0631\u062d\u0628\u0627\u064b " + name + "!\n\n" + "\u062a\u0623\u062e\u0631 \u0648\u0635\u0648\u0644 \u062a\u0623\u0643\u064a\u062f \u0627\u0644\u062f\u0641\u0639 \u0645\u0646 Bankily.\n\n" + "\u0625\u0630\u0627 \u0643\u0646\u062a \u0642\u062f \u0623\u0631\u0633\u0644\u062a \u0627\u0644\u0645\u0628\u0644\u063a\u060c \u064a\u0631\u062c\u0649 \u0627\u0644\u062a\u0648\u0627\u0635\u0644 \u0645\u0639\u0646\u0627 \u0645\u0628\u0627\u0634\u0631\u0629:\n\n" + "48 58 57 61\n\n" + "\u0633\u0646\u062a\u062d\u0642\u0642 \u064a\u062f\u0648\u064a\u0627\u064b \u0648\u062a\u0641\u0639\u064a\u0644 \u062d\u0633\u0627\u0628\u0643 \u0641\u064a \u0623\u0642\u0631\u0628 \u0648\u0642\u062a.";
 
             JSONObject body = new JSONObject();
             body.put("phone", phone);
